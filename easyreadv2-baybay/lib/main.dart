@@ -198,16 +198,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
 // Display chat history
-  void _showChatHistory() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Chat History'),
-          content: SizedBox(
-            width: double.maxFinite,
-            height: 400,
-            child: chatHistory.isEmpty
+void _showChatHistory() {
+  showDialog(
+    context: context,
+    builder: (BuildContext context) {
+      return AlertDialog(
+        title: const Text('Chat History'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: chatHistory.isEmpty
               ? const Center(child: Text('No chat history available.'))
               : ListView.builder(
                   itemCount: chatHistory.length,
@@ -225,26 +225,54 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     );
                   },
                 ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  chatHistory.clear();
-                });
-                Navigator.of(context).pop();
-              },
-              child: const Text('Clear History'),
-            ),
-          ],
-        );
-      },
-    );
-  }
+          TextButton(
+            onPressed: () {
+              // Show confirmation dialog BEFORE clearing history
+              _showDeleteConfirmation(context);
+            },
+            child: const Text('Clear History'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+// Show confirmation dialog before clearing history
+void _showDeleteConfirmation(BuildContext parentContext) {
+  showDialog(
+    context: parentContext,
+    builder: (BuildContext context) {
+      return AlertDialog(
+        title: Text("Confirm Deletion"),
+        content: Text("Are you sure you want to delete your chat history? This action cannot be undone."),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop(); // Close the confirmation dialog
+            },
+            child: Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () {
+              chatHistory.clear(); // Clear chat history
+              Navigator.of(context).pop(); // Close the confirmation dialog
+              Navigator.of(parentContext).pop(); // Close the chat history dialog
+            },
+            child: Text("Delete", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      );
+    },
+  );
+}
+
   
   // Load user preferences
   Future<void> _loadPreferences() async {
@@ -255,8 +283,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       letterSpacing = prefs.getDouble('letterSpacing') ?? 0.5;
       selectedFont = prefs.getString('selectedFont') ?? 'OpenDyslexic';
       speechRate = prefs.getDouble('speechRate') ?? 0.5;
-      textColor = Color(prefs.getInt('textColor') ?? Colors.black.value);
-      backgroundColor = Color(prefs.getInt('backgroundColor') ?? const Color(0xFFF5F5DC).value);
+      textColor = Color(prefs.getInt('textColor') ?? Colors.white.value);
+      backgroundColor = Color(prefs.getInt('backgroundColor') ?? Colors.grey.shade900.value);
       isBoldText = prefs.getBool('isBoldText') ?? false;
       isHighlightingEnabled = prefs.getBool('isHighlightingEnabled') ?? true;
       isDarkMode = prefs.getBool('isDarkMode') ?? false;
@@ -289,146 +317,157 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   // Call Gemini API for text processing
-  Future<void> callGeminiAPI(String prompt) async {
-    // Unfocus the text field to hide keyboard
-    _focusNode.unfocus();
-    
-    if (prompt.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter some text'))
-      );
-      return;
-    }
-    
-    setState(() {
-      isProcessing = true;
-      outputText = "Processing your request...";
-    });
-    
-    final apiKey = dotenv.env['API_KEY'];
-    if (apiKey == null || apiKey.isEmpty) {
-      setState(() {
-        outputText = 'API key is missing. Please check your .env file.';
-        isProcessing = false;
-      });
-      return;
-    }
-    final url = Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey');
+Future<void> callGeminiAPI(String prompt) async {
+  _focusNode.unfocus();
 
-    final systemPrompt = "You are an app that helps students with dyslexia. By providing real-time support, such as text-to-speech and word highlighting, to improve reading comprehension.";
-    String fullPrompt;
-    String promptTag;
-    
-    // Different prompts based on the selected mode
-    switch (_tabController.index) {
-      case 0:
-        fullPrompt = "$systemPrompt Answer the following question in simple, clear language suitable for someone with dyslexia: $prompt";
-        promptTag = "Ask";
-        break;
-      case 1:
-        fullPrompt = "$systemPrompt Please simplify this text to make it easier to read for someone with dyslexia. Use shorter sentences, simpler words, and clear structure: $prompt";
-        promptTag = "Simplify";
-        break;
-      case 2:
-        fullPrompt = "$systemPrompt Please explain the following text in simple terms suitable for someone with dyslexia. Use clear language and examples: $prompt";
-        promptTag = "Explain";
-        break;
-      case 3:
-        fullPrompt = "$systemPrompt Please summarize the key points of this text, making it concise and easy to understand for someone with dyslexia: $prompt";
-        promptTag = "Summarize";
-        break;
-      default:
-        fullPrompt = "$systemPrompt $prompt";
-        promptTag = "General";
-    }
-
-    try {
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "contents": [
-            {
-              "parts": [
-                {"text": fullPrompt}
-              ]
-            }
-          ],
-          "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 800
-          }
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final responseText = data['candidates'][0]['content']['parts'][0]['text'];
-        
-        setState(() {
-          outputText = responseText;
-          highlightedWords = outputText.split(' ');
-          highlightIndex = 0;
-          isProcessing = false;
-          
-          // Save chat to history with tag
-          _saveChat(prompt, responseText, promptTag);
-
-          // Clear input field
-          textController.clear();
-          inputText = '';
-        });
-      } else {
-        setState(() {
-          outputText = 'Error: Unable to generate text. Please try again.';
-          isProcessing = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        outputText = 'Network error: $e';
-        isProcessing = false;
-      });
-    }
+  if (prompt.trim().isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please enter some text')),
+    );
+    return;
   }
-  
-  // Text-to-speech functionality
-  Future<void> _speak(String text) async {
-    if (isSpeaking) {
-      await flutterTts.stop();
+
+  setState(() {
+    isProcessing = true;
+    outputText = "Processing your request...";
+  });
+
+  final apiKey = dotenv.env['API_KEY'];
+  if (apiKey == null || apiKey.isEmpty) {
+    setState(() {
+      outputText = 'API key is missing. Please check your .env file.';
+      isProcessing = false;
+    });
+    return;
+  }
+
+  final url = Uri.parse(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey');
+
+  final systemPrompt =
+      "You are an app that helps students with dyslexia. By providing real-time support, such as text-to-speech and word highlighting, to improve reading comprehension.";
+  String fullPrompt;
+  String promptTag;
+
+  switch (_tabController.index) {
+    case 0:
+      fullPrompt =
+          "$systemPrompt Answer the following question in simple, clear language suitable for someone with dyslexia: $prompt";
+      promptTag = "Ask";
+      break;
+    case 1:
+      fullPrompt =
+          "$systemPrompt Please simplify this text to make it easier to read for someone with dyslexia. Use shorter sentences, simpler words, and clear structure: $prompt";
+      promptTag = "Simplify";
+      break;
+    case 2:
+      fullPrompt =
+          "$systemPrompt Please explain the following text in simple terms suitable for someone with dyslexia. Use clear language and examples: $prompt";
+      promptTag = "Explain";
+      break;
+    case 3:
+      fullPrompt =
+          "$systemPrompt Please summarize the key points of this text, making it concise and easy to understand for someone with dyslexia: $prompt";
+      promptTag = "Summarize";
+      break;
+    default:
+      fullPrompt = "$systemPrompt $prompt";
+      promptTag = "General";
+  }
+
+  try {
+    final response = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        "contents": [
+          {
+            "parts": [
+              {"text": fullPrompt}
+            ]
+          }
+        ],
+        "generationConfig": {
+          "temperature": 0.7,
+          "maxOutputTokens": 800,
+        }
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final responseText = data['candidates'][0]['content']['parts'][0]['text'];
+
       setState(() {
-        isSpeaking = false;
+        outputText = responseText;
+        highlightedWords = outputText.split(' ');
+        highlightIndex = 0;
+        isProcessing = false;
+
+        _saveChat(prompt, responseText, promptTag);
+        textController.clear();
+        inputText = '';
       });
     } else {
-      await flutterTts.setSpeechRate(speechRate);
-      await flutterTts.speak(text);
       setState(() {
-        isSpeaking = true;
+        outputText = 'Error: Unable to generate text. Please try again.';
+        isProcessing = false;
       });
-      
-      // Start word highlighting if enabled
-      if (isHighlightingEnabled) {
-        _startWordHighlighting();
-      }
+    }
+  } catch (e) {
+    setState(() {
+      outputText = 'Network error: $e';
+      isProcessing = false;
+    });
+  }
+}
+  
+  // Text-to-speech functionality
+Future<void> _speak(String text) async {
+  if (isSpeaking) {
+    await flutterTts.stop();
+    setState(() {
+      isSpeaking = false;
+    });
+  } else {
+    await flutterTts.setSpeechRate(speechRate);
+    await flutterTts.speak(text);
+    setState(() {
+      isSpeaking = true;
+    });
+
+    // Start word highlighting if enabled
+    if (isHighlightingEnabled) {
+      _startWordHighlighting();
     }
   }
+}
   
   // Word-by-word highlighting
-  void _startWordHighlighting() async {
-    if (highlightedWords.isEmpty || !isHighlightingEnabled) return;
-    
-    highlightIndex = 0;
-    
-    for (int i = 0; i < highlightedWords.length; i++) {
-      if (!mounted || !isSpeaking || !isHighlightingEnabled) return;
-      
-      setState(() {
-        highlightIndex = i;
-      });
-      
-      await Future.delayed(Duration(milliseconds: (500 * (2.0 / speechRate)).round()));
-    }
+void _startWordHighlighting() async {
+  if (highlightedWords.isEmpty || !isHighlightingEnabled) return;
+
+  highlightIndex = 0;
+
+  for (int i = 0; i < highlightedWords.length; i++) {
+    if (!mounted || !isSpeaking || !isHighlightingEnabled) return;
+
+    setState(() {
+      highlightIndex = i;
+    });
+
+    // Adjust delay dynamically based on speech rate
+    final delay = Duration(milliseconds: (500 / speechRate).round());
+    await Future.delayed(delay);
   }
+
+  // Reset highlighting after finishing
+  if (mounted) {
+    setState(() {
+      highlightIndex = 0;
+    });
+  }
+}
   
   // Widget for displaying highlighted text
   Widget _buildHighlightedText() {
@@ -468,70 +507,51 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   // Tab widget to show different modes
-  Widget _buildTabBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(25),
-      ),
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: TabBar(
-        controller: _tabController,
-        indicator: BoxDecoration(
-          borderRadius: BorderRadius.circular(25),
-          color: Theme.of(context).colorScheme.primaryContainer,
-        ),
-        labelColor: Theme.of(context).colorScheme.onPrimaryContainer,
-        unselectedLabelColor: Theme.of(context).colorScheme.onSurfaceVariant,
-        tabs: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.chat_outlined),
-                SizedBox(width: 8),
-                Text("Ask"),
-              ],
-            ),
+Widget _buildTabBar() {
+  return Container(
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+      borderRadius: BorderRadius.circular(25),
+    ),
+    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 400; // Adjust based on screen width
+        return TabBar(
+          controller: _tabController,
+          indicator: BoxDecoration(
+            borderRadius: BorderRadius.circular(25),
+            color: Theme.of(context).colorScheme.primaryContainer,
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.sort_by_alpha),
-                SizedBox(width: 8),
-                Text("Simplify"),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.help_outline),
-                SizedBox(width: 8),
-                Text("Explain"),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.summarize),
-                SizedBox(width: 8),
-                Text("Summarize"),
-              ],
-            ),
-          ),
+          labelColor: Theme.of(context).colorScheme.onPrimaryContainer,
+          unselectedLabelColor: Theme.of(context).colorScheme.onSurfaceVariant,
+          tabs: [
+            _buildTab(isCompact, Icons.chat_outlined, "Ask"),
+            _buildTab(isCompact, Icons.sort_by_alpha, "Simplify"),
+            _buildTab(isCompact, Icons.help_outline, "Explain"),
+            _buildTab(isCompact, Icons.summarize, "Summarize"),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+Widget _buildTab(bool isCompact, IconData icon, String label) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon),
+        if (!isCompact) ...[
+          const SizedBox(width: 8),
+          Text(label),
         ],
-      ),
-    );
-  }
+      ],
+    ),
+  );
+}
 
   // Modern AI chat-like UI
   @override
@@ -653,96 +673,94 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
   
   // Output screen with AI response
-  Widget _buildOutputScreen() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Column(
-        children: [
-          // Response card
-          Expanded(
-            child: Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Response header
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primaryContainer,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(16),
-                        topRight: Radius.circular(16),
+Widget _buildOutputScreen() {
+  return Container(
+    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    child: Column(
+      children: [
+        // Response card
+        Expanded(
+          child: Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Response header
+                Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      topRight: Radius.circular(16),
+                    ),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        child: const Icon(Icons.assistant, color: Colors.white),
                       ),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: Theme.of(context).colorScheme.primary,
-                          child: const Icon(Icons.assistant, color: Colors.white),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'EasyRead Assistant',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Theme.of(context).colorScheme.onPrimaryContainer,
-                            ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'EasyRead Assistant',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onPrimaryContainer,
                           ),
                         ),
-                        // Speech button
-                        IconButton(
-                          icon: Icon(isSpeaking ? Icons.stop : Icons.volume_up),
-                          onPressed: () {
-                            if (outputText.isNotEmpty) {
-                              _speak(outputText);
-                            }
-                          },
-                          tooltip: isSpeaking ? 'Stop Reading' : 'Read Aloud',
+                      ),
+                      IconButton(
+                        icon: Icon(isSpeaking ? Icons.stop : Icons.volume_up),
+                        onPressed: () {
+                          if (outputText.isNotEmpty) {
+                            _speak(outputText);
+                          }
+                        },
+                        tooltip: isSpeaking ? 'Stop Reading' : 'Read Aloud',
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          isHighlightingEnabled ? Icons.highlight : Icons.highlight_off,
+                          color: isHighlightingEnabled 
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
-                        // Highlighting toggle
-                        IconButton(
-                          icon: Icon(
-                            isHighlightingEnabled ? Icons.highlight : Icons.highlight_off,
-                            color: isHighlightingEnabled 
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              isHighlightingEnabled = !isHighlightingEnabled;
-                              _savePreferences();
-                            });
-                          },
-                          tooltip: isHighlightingEnabled ? 'Disable Highlighting' : 'Enable Highlighting',
-                        ),
-                      ],
-                    ),
+                        onPressed: () {
+                          setState(() {
+                            isHighlightingEnabled = !isHighlightingEnabled;
+                            _savePreferences();
+                          });
+                        },
+                        tooltip: isHighlightingEnabled ? 'Disable Highlighting' : 'Enable Highlighting',
+                      ),
+                    ],
                   ),
-                  // Response content
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      child: isProcessing
-                        ? _buildLoadingIndicator()
-                        : SingleChildScrollView(
-                            child: _buildHighlightedText(),
-                          ),
-                    ),
+                ),
+                // Response content
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    child: isProcessing
+                      ? _buildLoadingIndicator()
+                      : SingleChildScrollView(
+                          child: _buildHighlightedText(),
+                        ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ),
+  );
+}
   
   // Loading indicator
   Widget _buildLoadingIndicator() {
@@ -767,57 +785,48 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 // Modern input area
 Widget _buildInputArea(String promptHint) {
   return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-    margin: const EdgeInsets.only(bottom: 8),
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surface,
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.1),
+          blurRadius: 4,
+          offset: const Offset(0, -2),
+        ),
+      ],
+    ),
     child: Row(
       children: [
         Expanded(
-          child: Card(
-            color: Theme.of(context).colorScheme.surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                controller: textController,
-                focusNode: _focusNode,
-                onChanged: (value) {
-                  inputText = value;
-                },
-                decoration: InputDecoration(
-                  hintText: promptHint,
-                  border: InputBorder.none,
-                  hintStyle: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-                  ),
-                ),
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-                maxLines: null,
+          child: TextField(
+            controller: textController,
+            focusNode: _focusNode,
+            decoration: InputDecoration(
+              hintText: promptHint,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
+              filled: true,
+              fillColor: Theme.of(context).colorScheme.surfaceVariant,
             ),
+            onChanged: (value) {
+              setState(() {
+                inputText = value;
+              });
+            },
           ),
         ),
         const SizedBox(width: 8),
-        FloatingActionButton(
-          onPressed: isProcessing 
-            ? null 
-            : () => callGeminiAPI(inputText),
-          backgroundColor: Theme.of(context).colorScheme.primary,
+        ElevatedButton(
+          onPressed: isProcessing ? null : () => callGeminiAPI(inputText),
           child: isProcessing
-            ? const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2,
-                ),
-              )
-            : const Icon(Icons.send, color: Colors.white),
-          mini: true,
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.send),
         ),
       ],
     ),
@@ -944,13 +953,14 @@ Widget _buildInputArea(String promptHint) {
                             value: speechRate,
                             min: 0.25,
                             max: 2.0,
-                            divisions: 6,
+                            divisions: 7,
                             label: speechRate.toStringAsFixed(2),
-                            onChanged: (value) {
+                            onChanged: (value) async{
                               setState(() {
                                 speechRate = value;
                               });
-                              this.setState(() {});
+                              await flutterTts.setSpeechRate(speechRate);
+                              _savePreferences();
                             },
                           ),
                           leading: const Icon(Icons.speed),
