@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'database/helpers/database_helper.dart';
 import 'database/models/chat_message.dart';
+import 'package:image_picker/image_picker.dart';
+import 'services/camera_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -146,6 +148,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   // Chat history
   List<Map<String, dynamic>> chatHistory = [];
 
+  // Camera service
+  final CameraService _cameraService = CameraService();
+
   @override
   void initState() {
     super.initState();
@@ -169,6 +174,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _tabController.dispose();
     textController.dispose();
     _focusNode.dispose();
+    _cameraService.dispose();
     super.dispose();
   }
 
@@ -840,6 +846,12 @@ Widget _buildInputArea(String promptHint) {
     margin: const EdgeInsets.only(bottom: 8),
     child: Row(
       children: [
+        // Add camera button
+        IconButton(
+          icon: const Icon(Icons.camera_alt),
+          onPressed: _showImageSourceDialog,
+          tooltip: 'Scan Text from Image',
+        ),
         Expanded(
           child: Card(
             color: Theme.of(context).colorScheme.surface,
@@ -1190,5 +1202,92 @@ Widget _buildInputArea(String promptHint) {
         );
       },
     );
+  }
+
+  // Add to _HomeScreenState class
+  void _showImageSourceDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.warning_amber, color: Colors.orange),
+              const SizedBox(width: 8),
+              const Text('Select Image Source'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange),
+                ),
+                child: const Text(
+                  '⚠️ Experimental Feature: Text recognition may not be entirely accurate and works best with clear, well-lit images of printed text.',
+                  style: TextStyle(
+                    color: Colors.orange,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: const Text('Take Photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _processImageToText(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Choose from Gallery'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _processImageToText(ImageSource.gallery);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Add method to process image and extract text
+  Future<void> _processImageToText(ImageSource source) async {
+    setState(() {
+      isProcessing = true;
+      outputText = "Processing image...";
+    });
+
+    try {
+      final extractedText = await _cameraService.processImage(source);
+      
+      if (extractedText.isEmpty) {
+        setState(() {
+          outputText = "No text found in image";
+          isProcessing = false;
+        });
+        return;
+      }
+
+      setState(() {
+        textController.text = extractedText;
+        inputText = extractedText;
+        outputText = "Text extracted from image. Choose an option above to process it.";
+        isProcessing = false;
+      });
+    } catch (e) {
+      setState(() {
+        outputText = "Error processing image: $e";
+        isProcessing = false;
+      });
+    }
   }
 }
