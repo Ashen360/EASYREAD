@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'database/helpers/database_helper.dart';
+import 'database/models/chat_message.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -182,14 +184,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
 // Save chat to history with tags
-  void _saveChat(String userMessage, String botResponse, String tag) {
+  void _saveChat(String userMessage, String botResponse, String tag) async {
+    final chatMessage = ChatMessage(
+      userMessage: userMessage,
+      botResponse: botResponse,
+      tag: tag,
+      timestamp: DateTime.now().toString(),
+    );
+
+    await DatabaseHelper.instance.insertChat(chatMessage);
+    await _loadChatHistory();
+  }
+
+// Load chat history
+  Future<void> _loadChatHistory() async {
+    final chats = await DatabaseHelper.instance.getRecentChats();
     setState(() {
-      chatHistory.insert(0, {
-        'user': userMessage,
-        'bot': botResponse,
-        'tag': tag,
-        'timestamp': DateTime.now(),
-      });
+      chatHistory = chats.map((chat) => {
+        'user': chat.userMessage,
+        'bot': chat.botResponse,
+        'tag': chat.tag,
+        'timestamp': chat.timestamp,
+      }).toList();
     });
   }
 
@@ -228,7 +244,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               child: const Text('Close'),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
+                await DatabaseHelper.instance.deleteAllChats();
                 setState(() {
                   chatHistory.clear();
                 });
